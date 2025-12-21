@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: KeyMinter
+key-minter:
+  algorithm: HMAC256           # ????
+  key-dir: ${user.home}/.chao  # ??????
+  enable-rotation: true        # ????
+  preferred-key-id: ""         # ????ID
+  force-load: false           # ????
+  export-enabled: false       # ????
+  metrics-enabled: true       # ????
