@@ -55,6 +55,11 @@ public class JwtFactory {
 
     public void setProperties(KeyMinterProperties prop) {
         this.properties = prop;
+        if (prop != null) {
+            System.out.println("JwtFactory: Properties set. KeyDir: " + prop.getKeyDir());
+        } else {
+            System.out.println("JwtFactory: Properties set to NULL");
+        }
         if (prop != null && prop.getMaxAlgoInstance() != null && prop.getMaxAlgoInstance() > 0) {
             this.maxAlgoInstance = prop.getMaxAlgoInstance();
         }
@@ -211,6 +216,8 @@ public class JwtFactory {
             if (!dir.isEmpty()) {
                 return Paths.get(dir);
             }
+        } else {
+             System.out.println("JwtFactory: resolveKeyDir failed. Properties: " + (this.properties != null) + ", KeyDir: " + (this.properties != null ? this.properties.getKeyDir() : "N/A"));
         }
         return null;
     }

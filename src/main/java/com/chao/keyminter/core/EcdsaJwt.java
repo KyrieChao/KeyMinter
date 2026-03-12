@@ -75,6 +75,10 @@ public class EcdsaJwt extends AbstractJwtAlgo {
         super(properties);
         this.currentKeyPath = initializeKeyPath(keyDir);
 
+        if (this.currentKeyPath != null) {
+            this.keyRepository = new com.chao.keyminter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
+        }
+
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
         }

@@ -11,7 +11,7 @@ public class KeyMinterProperties {
     /**
      * 密钥存储目录
      */
-    private String keyDir;
+    private String keyDir = System.getProperty("user.home") + "/.keyminter";
 
     /**
      * 是否启用密钥轮换

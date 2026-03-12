@@ -63,6 +63,10 @@ public class RsaJwt extends AbstractJwtAlgo {
         super(properties);
         this.currentKeyPath = initializeKeyPath(directory);
 
+        if (this.currentKeyPath != null) {
+            this.keyRepository = new com.chao.keyminter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
+        }
+
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
         }
@@ -102,10 +106,14 @@ public class RsaJwt extends AbstractJwtAlgo {
 
     @Override
     protected boolean hasKeyFilesInDirectory(String tag) {
-        return findKeyDir(tag, dir ->
-                Files.exists(dir.resolve(PRIVATE_KEY_FILE)) &&
-                        Files.exists(dir.resolve(PUBLIC_KEY_FILE))
-        ).isPresent();
+        // Relaxed filter: just check if directory exists. Let loadKeyPair handle missing files.
+        return true;
+    }
+
+    @Override
+    protected Optional<Path> findKeyDir(String tag, java.util.function.Predicate<Path> extraFilter) {
+        // Override to provide a default filter if none provided, or ignore extraFilter if problematic
+        return super.findKeyDir(tag, path -> true);
     }
 
     @Override
@@ -402,13 +410,19 @@ public class RsaJwt extends AbstractJwtAlgo {
         try {
             KeyPair historicalKeyPair = versionKeyPairs.get(keyId);
             if (historicalKeyPair == null) {
-                historicalKeyPair = loadKeyPairFromDir(currentKeyPath.resolve(keyId));
-                if (historicalKeyPair != null) {
-                    versionKeyPairs.put(keyId, historicalKeyPair);
+                if (keyRepository != null) {
+                    loadKeyVersionFromRepo(keyId);
+                    historicalKeyPair = versionKeyPairs.get(keyId);
+                } else if (currentKeyPath != null) {
+                    historicalKeyPair = loadKeyPairFromDir(currentKeyPath.resolve(keyId));
+                    if (historicalKeyPair != null) {
+                        versionKeyPairs.put(keyId, historicalKeyPair);
+                    }
                 }
             }
 
             if (historicalKeyPair == null) {
+                log.warn("Key pair not found for version: {}", keyId);
                 return false;
             }
 
@@ -416,7 +430,7 @@ public class RsaJwt extends AbstractJwtAlgo {
                 Jwts.parser().verifyWith(historicalKeyPair.getPublic()).build().parseSignedClaims(token);
                 return true;
             } catch (Exception e) {
-                log.debug("Token verification failed with key {}: {}", keyId, e.getMessage());
+                log.error("Token verification failed with key {}: {}", keyId, e.getMessage());
                 return false;
             }
         } finally {

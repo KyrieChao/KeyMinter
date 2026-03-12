@@ -53,8 +53,18 @@ public class Prep {
 
     public static JwtAlgo getPre(Algorithm algorithm, Path keyDir, KeyMinterProperties props, KeyRepositoryFactory repoFactory) {
         return switch (algorithm) {
-            case HMAC256, HMAC384, HMAC512 -> new HmacJwt(props, createRepo(keyDir, "hmac-keys", repoFactory));
-            case RSA256, RSA384, RSA512 -> new RsaJwt(props, createRepo(keyDir, "rsa-keys", repoFactory));
+            case HMAC256, HMAC384, HMAC512 -> {
+                if (repoFactory != null) {
+                    yield new HmacJwt(props, createRepo(keyDir, "hmac-keys", repoFactory));
+                }
+                yield new HmacJwt(props, keyDir);
+            }
+            case RSA256, RSA384, RSA512 -> {
+                if (repoFactory != null) {
+                    yield new RsaJwt(props, createRepo(keyDir, "rsa-keys", repoFactory));
+                }
+                yield new RsaJwt(props, keyDir);
+            }
             case ES256, ES384, ES512 -> new EcdsaJwt(props, keyDir);
             case Ed25519, Ed448 -> new EddsaJwt(props, keyDir);
         };

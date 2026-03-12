@@ -340,9 +340,9 @@ public class KeyRotation {
         }
         // 4. 移动后立即验证并设置权限
         if (System.getProperty("os.name").toLowerCase().contains("win")) {
-            // 等待文件系统同步
+            // 等待文件系统同步 - Increase wait time for Windows
             try {
-                Thread.sleep(200);
+                Thread.sleep(500);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }

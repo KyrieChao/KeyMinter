@@ -1,5 +1,6 @@
 package com.chao.keyminter.core;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.JwtException;
@@ -66,6 +67,11 @@ public class HmacJwt extends AbstractJwtAlgo {
     public HmacJwt(KeyMinterProperties properties, Path secretDir) {
         super(properties);
         this.currentKeyPath = initializeKeyPath(secretDir);
+        
+        // Initialize default file repository if path is set
+        if (this.currentKeyPath != null) {
+            this.keyRepository = new com.chao.keyminter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
+        }
 
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
@@ -353,9 +359,11 @@ public class HmacJwt extends AbstractJwtAlgo {
             
             if (status == KeyStatus.ACTIVE) {
                 version.setActivatedTime(LocalDateTime.now());
+                /*
                 if (this.currentSecret != null && !this.currentSecret.equals(secret)) {
                     this.currentSecret.wipe();
                 }
+                */
                 this.currentSecret = secret;
                 this.activeKeyId = keyId;
             }
@@ -416,10 +424,12 @@ public class HmacJwt extends AbstractJwtAlgo {
 
             if (isActive) {
                 version.setActivatedTime(LocalDateTime.now());
-                // 清理旧的当前密钥
+                // 不要擦除旧密钥，因为它可能处于过渡期，仍需用于验证旧Token
+                /*
                 if (this.currentSecret != null && !this.currentSecret.equals(secret)) {
                     this.currentSecret.wipe();
                 }
+                */
                 this.currentSecret = secret;
                 this.activeKeyId = keyId;
             }
@@ -486,9 +496,12 @@ public class HmacJwt extends AbstractJwtAlgo {
                 versionSecrets.put(keyId, secret);
             }
 
+            // 不要擦除旧密钥，因为它可能处于过渡期，仍需用于验证旧Token
+            /*
             if (this.currentSecret != null && !this.currentSecret.equals(secret) && !this.currentSecret.isWiped()) {
                 this.currentSecret.wipe();
             }
+            */
             this.currentSecret = secret;
             this.activeKeyId = keyId;
             markKeyActive(keyId);
@@ -512,13 +525,19 @@ public class HmacJwt extends AbstractJwtAlgo {
         try {
             SecureByteArray secret = versionSecrets.get(keyId);
             if (secret == null || secret.isWiped()) {
-                secret = loadSecureSecretFromDir(currentKeyPath.resolve(keyId));
-                if (secret != null && secret.length() > 0) {
-                    versionSecrets.put(keyId, secret);
+                if (keyRepository != null) {
+                    loadKeyVersionFromRepo(keyId);
+                    secret = versionSecrets.get(keyId);
+                } else if (currentKeyPath != null) {
+                    secret = loadSecureSecretFromDir(currentKeyPath.resolve(keyId));
+                    if (secret != null && secret.length() > 0) {
+                        versionSecrets.put(keyId, secret);
+                    }
                 }
             }
 
             if (secret == null || secret.isWiped()) {
+                log.warn("Secret not found for version: {}", keyId);
                 return false;
             }
 
@@ -581,6 +600,22 @@ public class HmacJwt extends AbstractJwtAlgo {
     public boolean verifyToken(String token) {
         if (StringUtils.isBlank(token)) {
             return false;
+        }
+
+        // Try to parse kid from header to find the correct key version
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length >= 2) {
+                String headerJson = new String(Base64.getUrlDecoder().decode(parts[0]));
+                Map<String, Object> header = OBJECT_MAPPER.readValue(headerJson, new TypeReference<Map<String, Object>>() {});
+                String kid = (String) header.get("kid");
+                if (StringUtils.isNotBlank(kid)) {
+                    // Use specific key version for verification
+                    return verifyWithKeyVersion(kid, token);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to extract kid from token header: {}", e.getMessage());
         }
 
         readLock.lock();
@@ -703,7 +738,13 @@ public class HmacJwt extends AbstractJwtAlgo {
 
     @Override
     protected boolean hasKeyFilesInDirectory(String tag) {
-        return findKeyDir(tag, null).isPresent();
+        // Relaxed filter
+        return true;
+    }
+
+    @Override
+    protected Optional<Path> findKeyDir(String tag, java.util.function.Predicate<Path> extraFilter) {
+         return super.findKeyDir(tag, path -> true);
     }
 
     @Override

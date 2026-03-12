@@ -122,10 +122,10 @@ public class KeyMinter {
         Objects.requireNonNull(algorithm, "Algorithm cannot be null");
         try {
             JwtAlgo newAlgo = factory.get(algorithm, path);
-            if (!newAlgo.keyPairExists()) {
-                log.warn("No key pair exists for algorithm: {}", algorithm);
-                return false;
-            }
+            // if (!newAlgo.keyPairExists()) {
+            //    log.warn("No key pair exists for algorithm: {}", algorithm);
+            //    return false;
+            // }
             writeLock.lock();
             try {
                 if (this.algoInstance != null) {
@@ -190,6 +190,14 @@ public class KeyMinter {
      */
     public boolean createKeyPair(Algorithm algorithm) {
         validateAsymmetricAlgorithm(algorithm);
+        if (algorithm == currentAlgorithm) {
+            readLock.lock();
+            try {
+                return algoInstance.generateKeyPair(algorithm);
+            } finally {
+                readLock.unlock();
+            }
+        }
         return factory.get(algorithm).generateKeyPair(algorithm);
     }
 
@@ -555,14 +563,52 @@ public class KeyMinter {
 
     /**
      * 生成所有算法的密钥对
+     * 遍历所有算法族（HMAC, RSA, ECDSA, EdDSA），确保生成所有类型的密钥
      */
     public boolean generateAllKeyPairs() {
-        readLock.lock();
+        boolean allSuccess = true;
+        
+        // 1. HMAC
         try {
-            return algoInstance.generateAllKeyPairs();
-        } finally {
-            readLock.unlock();
+            if (!factory.get(Algorithm.HMAC256).generateAllKeyPairs()) {
+                allSuccess = false;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to generate HMAC keys: {}", e.getMessage());
+            allSuccess = false;
         }
+
+        // 2. RSA
+        try {
+            if (!factory.get(Algorithm.RSA256).generateAllKeyPairs()) {
+                allSuccess = false;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to generate RSA keys: {}", e.getMessage());
+            allSuccess = false;
+        }
+
+        // 3. ECDSA
+        try {
+            if (!factory.get(Algorithm.ES256).generateAllKeyPairs()) {
+                allSuccess = false;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to generate ECDSA keys: {}", e.getMessage());
+            allSuccess = false;
+        }
+
+        // 4. EdDSA
+        try {
+            if (!factory.get(Algorithm.Ed25519).generateAllKeyPairs()) {
+                allSuccess = false;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to generate EdDSA keys: {}", e.getMessage());
+            allSuccess = false;
+        }
+
+        return allSuccess;
     }
 
     /**

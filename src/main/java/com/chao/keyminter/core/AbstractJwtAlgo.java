@@ -308,7 +308,10 @@ public abstract class AbstractJwtAlgo implements JwtAlgo {
         readLock.lock();
         try {
             KeyVersion version = keyVersions.get(keyId);
-            if (version == null) return false;
+            if (version == null) {
+                log.error("canKeyVerify: Version not found for keyId: {}", keyId);
+                return false;
+            }
 
             // 实时检查：如果处于过渡期且已超时，自动降级为INACTIVE
             if (version.getStatus() == KeyStatus.TRANSITIONING &&
@@ -331,7 +334,12 @@ public abstract class AbstractJwtAlgo implements JwtAlgo {
                 }
             }
 
-            return version.canVerify();
+            boolean can = version.canVerify();
+            if (!can) {
+                log.error("canKeyVerify: Key {} status {} cannot verify (Transition end: {})", 
+                        keyId, version.getStatus(), version.getTransitionEndsAt());
+            }
+            return can;
         } finally {
             readLock.unlock();
         }
@@ -513,18 +521,36 @@ public abstract class AbstractJwtAlgo implements JwtAlgo {
             return Optional.empty();
         }
 
-        Predicate<Path> filter = directoriesContainingTag(tag);
-        if (extraFilter != null) {
-            filter = filter.and(extraFilter);
+        // Retry logic for filesystem latency
+        for (int i = 0; i < 3; i++) {
+            try (Stream<Path> dirs = Files.list(currentKeyPath)) {
+                List<Path> allDirs = dirs.collect(Collectors.toList());
+                
+                Predicate<Path> filter = directoriesContainingTag(tag);
+                if (extraFilter != null) {
+                    filter = filter.and(extraFilter);
+                }
+                
+                Optional<Path> found = allDirs.stream().filter(filter)
+                        .max(Comparator.comparing(this::getDirTimestamp));
+                
+                if (found.isPresent()) {
+                    return found;
+                }
+                
+                // If not found, wait and retry
+                try {
+                    Thread.sleep(100 * (i + 1));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            } catch (IOException e) {
+                log.error("Failed to scan directory {}: {}", currentKeyPath, e.getMessage());
+                return Optional.empty();
+            }
         }
-
-        try (Stream<Path> dirs = Files.list(currentKeyPath)) {
-            return dirs.filter(filter)
-                    .max(Comparator.comparing(this::getDirTimestamp));
-        } catch (IOException e) {
-            log.error("Failed to scan directory {}: {}", currentKeyPath, e.getMessage());
-            return Optional.empty();
-        }
+        return Optional.empty();
     }
 
     public abstract String generateJwt(JwtProperties properties, Map<String, Object> customClaims, Algorithm algorithm);
@@ -577,6 +603,19 @@ public abstract class AbstractJwtAlgo implements JwtAlgo {
     public static Date toDate(Instant instant) {
         Objects.requireNonNull(instant, "Instant cannot be null");
         return Date.from(instant);
+    }
+
+    @Override
+    public List<KeyVersion> listAllKeys() {
+        if (currentKeyPath != null) {
+            Path parent = currentKeyPath.getParent();
+            // If parent is null (e.g. path is just "hmac-keys"), we might need to use absolute path or current dir
+            if (parent == null) {
+                parent = Paths.get(".");
+            }
+            return listAllKeys(parent.toString());
+        }
+        return listAllKeys(String.valueOf(getDefaultSecretDir()));
     }
 
     @Override

@@ -41,6 +41,11 @@ public class KeyMinterAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(JwtFactory.class)
     public JwtFactory jwtFactory(KeyMinterProperties properties, KeyRepositoryFactory repoFactory) {
+        if (properties == null) {
+            System.err.println("KeyMinterAutoConfiguration: properties injected is NULL!");
+        } else {
+            System.out.println("KeyMinterAutoConfiguration: properties injected: " + properties + ", KeyDir: " + properties.getKeyDir());
+        }
         JwtFactory factory = new JwtFactory();
         factory.setProperties(properties);
         factory.setRepositoryFactory(repoFactory);
