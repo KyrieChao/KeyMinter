@@ -1,6 +1,6 @@
 key-minter:
   algorithm: HMAC256
-  key-dir: ${user.home}/.keyminter-test-env
+  key-dir: ${user.home}/.keyMinter-test-env
   enable-rotation: true
   preferred-key-id: ""
   force-load: true
