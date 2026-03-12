@@ -1,12 +1,12 @@
 package com.chao.keyminter.demo;
 
-import keyMinter.api.KeyMinter;
-import keyMinter.config.KeyMinterAutoConfiguration;
-import keyMinter.internal.core.JwtAlgo;
-import keyMinter.model.Algorithm;
-import keyMinter.model.JwtProperties;
-import keyMinter.model.JwtStandardInfo;
-import keyMinter.model.KeyVersion;
+import com.chao.keyminter.api.KeyMinter;
+import com.chao.keyminter.adapter.in.spring.KeyMinterAutoConfiguration;
+import com.chao.keyminter.domain.service.JwtAlgo;
+import com.chao.keyminter.domain.model.Algorithm;
+import com.chao.keyminter.domain.model.JwtProperties;
+import com.chao.keyminter.domain.model.JwtStandardInfo;
+import com.chao.keyminter.domain.model.KeyVersion;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,42 +27,33 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest(classes = KeyMinterAutoConfiguration.class)
 @Import(KeyMinterAutoConfiguration.class)
 @ActiveProfiles("test") // Uses application.yml from src/test/resources
+@org.springframework.test.context.TestPropertySource(properties = "key-minter.key-dir=${java.io.tmpdir}/keyminter-test/comprehensive-${random.uuid}")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class KeyMinterComprehensiveTest {
 
     @Autowired
     private KeyMinter keyMinter;
 
-    // Must match application.yml
-    private static final Path TEST_KEY_DIR = Path.of(System.getProperty("user.home"), ".keyminter-test-env");
+    // Use property injection or just trust KeyMinter is configured correctly
+    // private static final Path TEST_KEY_DIR = Path.of(System.getProperty("user.home"), ".keyminter-test-env");
+    
+    // We can't easily access the random UUID path here for cleanup in BeforeAll/AfterAll static methods.
+    // However, since we use random UUID in tmpdir, we don't strictly need manual cleanup of a fixed directory anymore,
+    // as it won't conflict with other tests. The OS or subsequent runs might clean up /tmp.
+    // But to be clean, we can inject the value. But static methods can't access injected values.
+    // So we'll remove the manual cleanup of the fixed directory and rely on unique temp dirs.
 
     @BeforeAll
     static void setup() throws IOException {
-        if (Files.exists(TEST_KEY_DIR)) {
-            deleteDirectoryRecursively();
-        }
-        Files.createDirectories(TEST_KEY_DIR);
+        // No-op or clean up if we knew the path
     }
 
     @AfterAll
     static void cleanup() throws IOException {
-        deleteDirectoryRecursively();
+        // No-op
     }
 
-    private static void deleteDirectoryRecursively() throws IOException {
-        if (Files.exists(KeyMinterComprehensiveTest.TEST_KEY_DIR)) {
-            try (Stream<Path> walk = Files.walk(KeyMinterComprehensiveTest.TEST_KEY_DIR)) {
-                walk.sorted(Comparator.reverseOrder())
-                        .forEach(p -> {
-                            try {
-                                Files.delete(p);
-                            } catch (IOException e) {
-                                // ignore
-                            }
-                        });
-            }
-        }
-    }
+    // private static void deleteDirectoryRecursively() ... (remove)
 
     @Test
     @Order(1)
@@ -241,7 +232,7 @@ class KeyMinterComprehensiveTest {
         
         // With Key Directory (Factory method)
         // Note: This creates a NEW instance, doesn't change current
-        JwtAlgo customAlgo = keyMinter.withKeyDirectory(TEST_KEY_DIR.resolve("custom"));
+        JwtAlgo customAlgo = keyMinter.withKeyDirectory(Path.of(System.getProperty("java.io.tmpdir"), "custom-" + java.util.UUID.randomUUID()));
         assertNotNull(customAlgo);
         
         // Close

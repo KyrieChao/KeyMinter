@@ -1,0 +1,17 @@
+key-minter:
+  algorithm: HMAC256
+  key-dir: ${user.home}/.keyminter-test-env
+  enable-rotation: true
+  preferred-key-id: ""
+  force-load: true
+  export-enabled: false
+  metrics-enabled: true
+  max-algo-instance: 5
+  key-validity-days: 90
+  transition-period-hours: 24
+  rotation-advance-days: 7
+  auto-cleanup-expired-keys: true
+  cleanup-interval-millis: 300000 # 改为5分钟
+  expired-key-cleanup-interval-hours: 24
+  blacklist-cleanup-interval-minutes: 60
+  blacklist-entry-ttl-hours: 24

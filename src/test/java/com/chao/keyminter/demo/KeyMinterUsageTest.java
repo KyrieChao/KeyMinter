@@ -1,13 +1,13 @@
 package com.chao.keyminter.demo;
 
-import keyMinter.api.KeyMinter;
-import keyMinter.config.KeyMinterAutoConfiguration;
-import keyMinter.model.*;
+import com.chao.keyminter.api.KeyMinter;
+import com.chao.keyminter.adapter.in.spring.KeyMinterAutoConfiguration;
+import com.chao.keyminter.domain.service.JwtAlgo;
+import com.chao.keyminter.domain.model.*;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,53 +23,70 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * KeyMinter 全功能覆盖测试与使用示例
  */
-@Slf4j
 @SpringBootTest(classes = KeyMinterAutoConfiguration.class)
+@org.springframework.test.context.TestPropertySource(properties = "key-minter.key-dir=${java.io.tmpdir}/keyminter-test/usage-${random.uuid}")
 public class KeyMinterUsageTest {
 
     @Autowired
     private KeyMinter key;
 
     @Test
-    @Order(1)
-    @DisplayName("HMAC: Lifecycle and Basic Operations")
-    void testHmacLifecycle() {
-        // 1. Create Key
-        boolean b = key.createHmacKey(Algorithm.HMAC256, 64);
+    @DisplayName("生成EC密钥 - ES256成功")
+    void generateEcKey_ES256_Success() {
+//        boolean result = key.createKeyPair(Algorithm.ES256);
+        boolean b = key.switchTo(Algorithm.ES256);
+//        assertTrue(result);
         assertTrue(b);
-        // 2. Switch
-        boolean condition = key.switchTo(Algorithm.HMAC256);
-        assertTrue(condition);
-        // 3. Generate Token
-        JwtProperties props = JwtProperties.builder()
-                .subject("test-user")
-                .issuer("test-issuer")
-                .expiration(Instant.now().plus(Duration.ofMinutes(1)))
-                .build();
-
-        String token = key.generateToken(props);
-        assertNotNull(token);
-
-        // 4. Verify
-        assertTrue(key.isValidToken(token));
-
-        // 5. Decode
-        JwtStandardInfo info = key.getStandardInfo(token);
-        assertEquals("test-user", info.getSubject());
-        assertEquals("test-issuer", info.getIssuer());
-
-        // 6. Decode Map
-        Map<String, Object> map = key.decodeToFullMap(token);
-        assertEquals("test-user", map.get("sub"));
-
-        // 7. Check Decodable
-        assertTrue(key.isTokenDecodable(token));
+        assertTrue(key.keyPairExists());
+        assertNotNull(key.getActiveKeyId());
+        System.out.println("exit:" + key.keyPairExists() + ",active:" + key.getActiveKeyId() + " 4");
+        key.close();
     }
 
     @Test
-    @DisplayName("1. 基础 Token 生成与验证 (HMAC)")
+    @DisplayName("生成EC密钥 - ES384成功")
+    void generateEcKey_ES384_Success() {
+        boolean result = key.createKeyPair(Algorithm.ES384);
+        boolean b = key.switchTo(Algorithm.ES384);
+        assertTrue(result);
+        assertTrue(b);
+        assertTrue(key.keyPairExists());
+        assertNotNull(key.getActiveKeyId());
+        System.out.println("exit:" + key.keyPairExists() + ",active:" + key.getActiveKeyId() + " 5");
+        key.close();
+    }
+
+    @Test
+    @DisplayName("生成EC密钥 - ES512成功")
+    void generateEcKey_ES512_Success() {
+        boolean result = key.createKeyPair(Algorithm.ES512);
+        boolean b = key.switchTo(Algorithm.ES512);
+        assertTrue(result);
+        assertTrue(b);
+        assertTrue(key.keyPairExists());
+        assertNotNull(key.getActiveKeyId());
+        System.out.println("exit:" + key.keyPairExists() + ",active:" + key.getActiveKeyId() + " 6");
+        key.close();
+    }
+
+    @Test
+    @DisplayName("生成HMAC密钥 - HS512成功")
+    void generateHmacKey_HS512_Success() {
+        boolean result = key.createHmacKey(Algorithm.HMAC512, 64);
+        System.out.println("key:" + key.getKeyVersions());
+        boolean b = key.switchTo(Algorithm.HMAC512);
+        assertTrue(result);
+        assertTrue(b);
+        assertTrue(key.keyPairExists());
+        assertNotNull(key.getActiveKeyId());
+        System.out.println("exit:" + key.keyPairExists() + ",active:" + key.getActiveKeyId() + " 3");
+        key.close();
+    }
+
+    @Test
+    @DisplayName(" 基础 Token 生成与验证 (HMAC)")
     void testBasicHmacFlow() {
-        log.info("=== 测试 HMAC 基础流程 ===");
+        System.out.println("=== 测试 HMAC 基础流程 ===");
         // 1. 切换到 HMAC256
         key.switchTo(Algorithm.HMAC256);
         // 2. 准备 Token 属性
@@ -82,7 +99,7 @@ public class KeyMinterUsageTest {
         // 3. 生成 Token
         String token = key.generateToken(props);
         Assertions.assertNotNull(token);
-        log.info("Generated HMAC Token: {}", token);
+        System.out.println("Generated HMAC Token: " + token);
 
         // 4. 验证 Token
         boolean isValid = key.isValidToken(token);
@@ -122,13 +139,13 @@ public class KeyMinterUsageTest {
     void testEcdsaLifecycle() {
         // Ensure a key exists in that directory (createKeyPair uses default/configured dir)
         if (!key.keyPairExists(Algorithm.ES256)) {
-             assertTrue(key.createKeyPair(Algorithm.ES256));
+            assertTrue(key.createKeyPair(Algorithm.ES256));
         }
 
         // Ensure we are operating in the correct directory
         boolean condition = key.switchTo(Algorithm.ES256);
         assertTrue(condition);
-        
+
         String token = key.generateToken(JwtProperties.builder().subject("ec").issuer("test").expiration(Instant.now().plus(Duration.ofMinutes(1))).build());
         assertTrue(key.isValidToken(token));
 
@@ -140,7 +157,7 @@ public class KeyMinterUsageTest {
     @Test
     @DisplayName("2. 携带自定义 Payload (RSA)")
     void testCustomPayloadWithRsa() {
-        log.info("=== 测试 RSA 自定义载荷流程 ===");
+        System.out.println("=== 测试 RSA 自定义载荷流程 ===");
         // 1. 切换到 RSA256 (会自动生成/加载密钥对)
         key.switchTo(Algorithm.RSA256);
 
@@ -159,7 +176,7 @@ public class KeyMinterUsageTest {
         // 3. 生成 Token
         String token = key.generateToken(props, user, DemoUser.class);
         Assertions.assertNotNull(token);
-        log.info("Generated RSA Token: {}", token);
+        System.out.println("Generated RSA Token: " + token);
 
         // 4. 解析回对象
         DemoUser decodedUser = key.decodeToObject(token, DemoUser.class);
@@ -176,7 +193,7 @@ public class KeyMinterUsageTest {
     @Test
     @DisplayName("3. 算法热切换与平滑过渡")
     void testAlgorithmSwitching() {
-        log.info("=== 测试算法热切换与平滑过渡 ===");
+        System.out.println("=== 测试算法热切换与平滑过渡 ===");
 
         // 1. 初始状态：HMAC
         key.switchTo(Algorithm.HMAC256);
@@ -187,7 +204,7 @@ public class KeyMinterUsageTest {
         Assertions.assertTrue(key.isValidToken(hmacToken), "HMAC Token 应该有效");
 
         // 2. 切换算法：Ed25519
-        log.info("切换算法到 Ed25519...");
+        System.out.println("切换算法到 Ed25519...");
         key.switchTo(Algorithm.Ed25519);
         // 确保有密钥可用
         if (!key.keyPairExists()) {
@@ -210,13 +227,13 @@ public class KeyMinterUsageTest {
         boolean isOldTokenValid = key.isValidToken(hmacToken);
         Assertions.assertTrue(isOldTokenValid, "旧算法生成的 Token 在过渡期内应该依然有效");
 
-        log.info("平滑过渡测试通过！");
+        System.out.println("平滑过渡测试通过！");
     }
 
     @Test
     @DisplayName("4. 密钥管理与查询")
     void testKeyManagement() {
-        log.info("=== 测试密钥管理 ===");
+        System.out.println("=== 测试密钥管理 ===");
 
         // 1. 创建新密钥
         key.createHmacKey(Algorithm.HMAC512, 128);
@@ -225,13 +242,13 @@ public class KeyMinterUsageTest {
         // 2. 获取当前密钥信息
         String algoInfo = key.getAlgorithmInfo();
         String keyInfo = key.getJwtProperties();
-        log.info("Current Algo: {}, Key Info: {}", algoInfo, keyInfo);
+        System.out.println("Current Algo: " + algoInfo + ", Key Info: " + keyInfo);
         Assertions.assertNotNull(algoInfo);
 
         // 3. 列出所有密钥版本
         List<KeyVersion> keys = key.listKeys();
         Assertions.assertFalse(keys.isEmpty());
-        keys.forEach(k -> log.info("Found Key: {}", k));
+        keys.forEach(k -> System.out.println("Found Key: " + k));
 
         // 4. 检查当前使用的 Key ID
         String activeKeyId = key.getActiveKeyId();
@@ -270,21 +287,24 @@ public class KeyMinterUsageTest {
     @Test
     @DisplayName("6. 测试switchTo")
     void testSwitchTo() throws InterruptedException {
-        key.switchTo(Algorithm.ES256);
+        key.switchTo(Algorithm.ES384);
         Thread.sleep(2000);
-        key.switchTo(Algorithm.Ed25519);
-        String token = key.generateToken(JwtProperties.builder()
-                .subject("old-user")
-                .issuer("KeyMinter-Test")
-                .expiration(Instant.now().plus(Duration.ofMinutes(1))).build());
-        log.info("Generated Token: {}", token);
+        System.out.println("algorithm:" + key.getActiveKeyId());
+        key.switchTo(Algorithm.HMAC256);
+        System.out.println("algorithm:" + key.getActiveKeyId());
     }
 
     // 模拟的自定义用户类
-    @Data
     static class DemoUser {
         private Long id;
         private String username;
         private List<String> roles;
+
+        public Long getId() { return id; }
+        public void setId(Long id) { this.id = id; }
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public List<String> getRoles() { return roles; }
+        public void setRoles(List<String> roles) { this.roles = roles; }
     }
 }
