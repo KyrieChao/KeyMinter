@@ -112,9 +112,7 @@ public class EddsaJwt extends AbstractJwtAlgo {
         ensureBouncyCastle();
         this.currentKeyPath = initializeKeyPath(keyDir);
 
-        if (this.currentKeyPath != null) {
-            this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
-        }
+        this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
 
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
@@ -194,7 +192,7 @@ public class EddsaJwt extends AbstractJwtAlgo {
     @Override
     public boolean rotateKey(Algorithm algorithm, String newKeyIdentifier) {
         // Use configured transition period or default 24h
-        int transitionHours = keyMinterProperties != null ? keyMinterProperties.getTransitionPeriodHours() : 24;
+        int transitionHours = keyMinterProperties.getTransitionPeriodHours();
         return rotateKeyWithTransition(algorithm, newKeyIdentifier, transitionHours);
     }
 
@@ -218,18 +216,7 @@ public class EddsaJwt extends AbstractJwtAlgo {
     }
 
     private OctetKeyPair generateEdKeyPair(Algorithm algorithm, String keyId) {
-        if (algorithm == Algorithm.Ed25519) {
-            try {
-                return new OctetKeyPairGenerator(Curve.Ed25519)
-                        .keyID(keyId)
-                        .generate();
-            } catch (Throwable e) {
-                log.warn("Nimbus Ed25519 generation failed, using BC: {}", e.getMessage());
-                return generateKeyPairWithBC(algorithm, keyId);
-            }
-        } else {
-            return generateKeyPairWithBC(algorithm, keyId);
-        }
+        return generateKeyPairWithBC(algorithm, keyId);
     }
 
     private OctetKeyPair generateKeyPairWithBC(Algorithm algorithm, String keyId) {
@@ -530,14 +517,7 @@ public class EddsaJwt extends AbstractJwtAlgo {
     }
 
     private JWSSigner createEd25519Signer(OctetKeyPair keyPair) {
-        try {
-            Class<?> ed25519SignerClass = Class.forName("com.nimbusds.jose.crypto.Ed25519Signer");
-            return (JWSSigner) ed25519SignerClass.getConstructor(OctetKeyPair.class)
-                    .newInstance(keyPair);
-        } catch (Throwable e) {
-            log.debug("Using custom Ed25519 signer: {}", e.getMessage());
-            return new CustomEd25519Signer(keyPair);
-        }
+        return new CustomEd25519Signer(keyPair);
     }
 
     private JWSSigner createEd448Signer(OctetKeyPair keyPair) {

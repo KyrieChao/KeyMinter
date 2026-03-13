@@ -413,6 +413,7 @@ public abstract class AbstractJwtAlgo implements JwtAlgo {
     /**
      * Cleanup expired keys and manage transition states.
      */
+    @Override
     public void cleanupExpiredKeys() {
         writeLock.lock();
         try {

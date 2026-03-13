@@ -35,11 +35,39 @@ class RedisLockProviderTest {
     }
     
     @Test
-    void testConstructors() {
-        // Test default values
-        RedisLockProvider provider = new RedisLockProvider(redisTemplate, null, 0);
-        assertNotNull(provider);
-        // We can't easily check private fields, but we verify it doesn't crash
+    void constructor_should_apply_defaults_when_inputs_invalid() throws Exception {
+        // Arrange
+        RedisLockProvider provider = new RedisLockProvider(redisTemplate, null, 0, 0, 0);
+
+        // Act
+        String lockPrefix = (String) getField(provider, "lockPrefix");
+        long expireMillis = (long) getField(provider, "expireMillis");
+        long retryIntervalMillis = (long) getField(provider, "retryIntervalMillis");
+        long maxRetryIntervalMillis = (long) getField(provider, "maxRetryIntervalMillis");
+
+        // Assert
+        assertEquals("keyM:lock:", lockPrefix);
+        assertEquals(30000L, expireMillis);
+        assertEquals(100L, retryIntervalMillis);
+        assertEquals(2000L, maxRetryIntervalMillis);
+    }
+
+    @Test
+    void constructor_should_use_provided_values_when_inputs_valid() throws Exception {
+        // Arrange
+        RedisLockProvider provider = new RedisLockProvider(redisTemplate, "p:", 123, 7, 9);
+
+        // Act
+        String lockPrefix = (String) getField(provider, "lockPrefix");
+        long expireMillis = (long) getField(provider, "expireMillis");
+        long retryIntervalMillis = (long) getField(provider, "retryIntervalMillis");
+        long maxRetryIntervalMillis = (long) getField(provider, "maxRetryIntervalMillis");
+
+        // Assert
+        assertEquals("p:", lockPrefix);
+        assertEquals(123L, expireMillis);
+        assertEquals(7L, retryIntervalMillis);
+        assertEquals(9L, maxRetryIntervalMillis);
     }
 
     @Test
@@ -152,5 +180,11 @@ class RedisLockProviderTest {
     void testNewCondition() {
         Lock lock = lockProvider.getLock("resource");
         assertThrows(UnsupportedOperationException.class, lock::newCondition);
+    }
+
+    private static Object getField(Object target, String fieldName) throws Exception {
+        java.lang.reflect.Field f = target.getClass().getDeclaredField(fieldName);
+        f.setAccessible(true);
+        return f.get(target);
     }
 }

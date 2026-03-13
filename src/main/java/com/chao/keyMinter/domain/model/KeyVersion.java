@@ -66,13 +66,6 @@ public class KeyVersion {
      */
     private LocalDateTime deactivatedTime;
 
-    /**
-     * Deprecated active flag.
-     *
-     * @deprecated Use {@link #getStatus()} instead.
-     */
-    @Deprecated
-    private Boolean active;
 
     public KeyVersion(String keyId, Algorithm algorithm, String keyPath) {
         this.keyId = keyId;
@@ -122,6 +115,7 @@ public class KeyVersion {
         return status == KeyStatus.TRANSITIONING ||
                 (status == KeyStatus.INACTIVE && transitionEndsAt != null && Instant.now().isBefore(transitionEndsAt));
     }
+
 
     /**
      * Check if the key is expired.

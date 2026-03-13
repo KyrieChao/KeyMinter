@@ -233,8 +233,7 @@ public class RsaJwt extends AbstractJwtAlgo {
     @Override
     public boolean rotateKey(Algorithm algorithm, String newKeyIdentifier) {
         // Get transition period from properties
-        int transitionHours = keyMinterProperties != null ?
-                keyMinterProperties.getTransitionPeriodHours() : 24;
+        int transitionHours = keyMinterProperties.getTransitionPeriodHours();
         return rotateKeyWithTransition(algorithm, newKeyIdentifier, transitionHours);
     }
 
@@ -406,21 +405,35 @@ public class RsaJwt extends AbstractJwtAlgo {
             return false;
         }
 
+        KeyPair historicalKeyPair;
         readLock.lock();
         try {
-            KeyPair historicalKeyPair = versionKeyPairs.get(keyId);
-            if (historicalKeyPair == null) {
-                if (keyRepository != null) {
-                    loadKeyVersionFromRepo(keyId);
-                    historicalKeyPair = versionKeyPairs.get(keyId);
-                } else if (currentKeyPath != null) {
-                    historicalKeyPair = loadKeyPairFromDir(currentKeyPath.resolve(keyId));
-                    if (historicalKeyPair != null) {
+            historicalKeyPair = versionKeyPairs.get(keyId);
+        } finally {
+            readLock.unlock();
+        }
+
+        if (historicalKeyPair == null) {
+            if (keyRepository != null) {
+                loadKeyVersionFromRepo(keyId);
+            } else if (currentKeyPath != null) {
+                historicalKeyPair = loadKeyPairFromDir(currentKeyPath.resolve(keyId));
+                if (historicalKeyPair != null) {
+                    writeLock.lock();
+                    try {
                         versionKeyPairs.put(keyId, historicalKeyPair);
+                    } finally {
+                        writeLock.unlock();
                     }
                 }
             }
+        }
 
+        readLock.lock();
+        try {
+            if (historicalKeyPair == null) {
+                historicalKeyPair = versionKeyPairs.get(keyId);
+            }
             if (historicalKeyPair == null) {
                 log.warn("Key pair not found for version: {}", keyId);
                 return false;
@@ -671,10 +684,9 @@ public class RsaJwt extends AbstractJwtAlgo {
     }
 
     private void loadLegacyKeyPair() {
-        Path privateKeyPath = currentKeyPath.resolve(PRIVATE_KEY_FILE);
-        Path publicKeyPath = currentKeyPath.resolve(PUBLIC_KEY_FILE);
-
         try {
+            Path privateKeyPath = currentKeyPath.resolve(PRIVATE_KEY_FILE);
+            Path publicKeyPath = currentKeyPath.resolve(PUBLIC_KEY_FILE);
             KeyPair keyPair = loadKeyPairFromPaths(privateKeyPath, publicKeyPath);
             if (keyPair == null) {
                 log.debug("No legacy RSA key pair found at: {}", currentKeyPath);

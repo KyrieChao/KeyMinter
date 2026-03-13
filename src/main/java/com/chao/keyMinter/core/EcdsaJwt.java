@@ -76,9 +76,7 @@ public class EcdsaJwt extends AbstractJwtAlgo {
         super(properties);
         this.currentKeyPath = initializeKeyPath(keyDir);
 
-        if (this.currentKeyPath != null) {
-            this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
-        }
+        this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
 
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
@@ -145,7 +143,7 @@ public class EcdsaJwt extends AbstractJwtAlgo {
     @Override
     public boolean rotateKey(Algorithm algorithm, String newKeyIdentifier) {
         // Use configured transition period or default 24h
-        int transitionHours = keyMinterProperties != null ? keyMinterProperties.getTransitionPeriodHours() : 24;
+        int transitionHours = keyMinterProperties.getTransitionPeriodHours();
         return rotateKeyWithTransition(algorithm, newKeyIdentifier, transitionHours);
     }
 

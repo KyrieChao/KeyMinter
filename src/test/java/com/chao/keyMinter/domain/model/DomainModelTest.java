@@ -93,6 +93,7 @@ class DomainModelTest {
 
         assertEquals("bar", info.getCustomClaim("foo"));
         assertTrue(info.hasClaim("foo"));
+        assertFalse(info.hasClaim("foo2"));
         assertNull(info.getCustomClaim("baz"));
         
         // Lombok methods

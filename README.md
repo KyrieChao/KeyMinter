@@ -1,6 +1,6 @@
 # KeyMinter
-[![Java CI with Maven](https://github.com/KyrieChao/Json-Web-Token/actions/workflows/ci.yml/badge.svg)](https://github.com/KyrieChao/Json-Web-Token/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/KyrieChao/Json-Web-Token/branch/main/graph/badge.svg)](https://codecov.io/gh/KyrieChao/Json-Web-Token)
+[![Java CI with Maven](https://github.com/KyrieChao/KeyMinter/actions/workflows/ci.yml/badge.svg)](https://github.com/KyrieChao/KeyMinter/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/KyrieChao/KeyMinter/branch/main/graph/badge.svg)](https://codecov.io/gh/KyrieChao/KeyMinter)
 [![Java 17+](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/technologies/downloads/)
 [![Spring Boot 3](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)

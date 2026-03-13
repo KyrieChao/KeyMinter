@@ -5,15 +5,23 @@ import com.chao.keyMinter.domain.model.Algorithm;
 import com.chao.keyMinter.domain.model.JwtProperties;
 import com.chao.keyMinter.domain.model.KeyStatus;
 import com.chao.keyMinter.domain.model.KeyVersion;
+import com.chao.keyMinter.domain.port.out.KeyRepository;
 import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -285,6 +293,359 @@ class AbstractJwtAlgoTest {
         assertEquals(java.time.LocalDateTime.MIN, jwtAlgo.getDirTimestamp(p2));
     }
 
+    @Test
+    void testGetKeyVersions_and_filters() {
+        // Arrange
+        KeyVersion h1 = KeyVersion.builder().keyId("h1").algorithm(Algorithm.HMAC256).status(KeyStatus.CREATED).build();
+        KeyVersion r1 = KeyVersion.builder().keyId("r1").algorithm(Algorithm.RSA256).status(KeyStatus.REVOKED).build();
+        jwtAlgo.addKeyVersion(h1);
+        jwtAlgo.addKeyVersion(r1);
+
+        // Act
+        List<String> all = jwtAlgo.getKeyVersions();
+        List<String> hmacOnly = jwtAlgo.getKeyVersions(Algorithm.HMAC256);
+        List<String> nullAlgo = jwtAlgo.getKeyVersions((Algorithm) null);
+        List<String> revoked = jwtAlgo.getKeyVersionsByStatus(KeyStatus.REVOKED);
+        List<String> nullStatus = jwtAlgo.getKeyVersionsByStatus(null);
+
+        // Assert
+        assertTrue(all.containsAll(List.of("h1", "r1")));
+        assertEquals(List.of("h1"), hmacOnly);
+        assertEquals(Collections.emptyList(), nullAlgo);
+        assertEquals(List.of("r1"), revoked);
+        assertEquals(Collections.emptyList(), nullStatus);
+    }
+
+    @Test
+    void testGetActiveKeyVersion_when_no_active_returns_null() {
+        // Arrange
+        jwtAlgo.setActiveKeyIdDirectly(null);
+
+        // Act
+        KeyVersion active = jwtAlgo.getActiveKeyVersion();
+
+        // Assert
+        assertNull(active);
+    }
+
+    @Test
+    void testSetActiveKey_success_sets_transition_for_old_key_and_activates_new() {
+        // Arrange
+        properties.setTransitionPeriodHours(1);
+        KeyVersion oldKey = KeyVersion.builder()
+                .keyId("old")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.ACTIVE)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        KeyVersion newKey = KeyVersion.builder()
+                .keyId("new")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.CREATED)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        jwtAlgo.addKeyVersion(oldKey);
+        jwtAlgo.addKeyVersion(newKey);
+        jwtAlgo.setActiveKeyIdDirectly("old");
+
+        // Act
+        boolean ok = jwtAlgo.setActiveKey("new");
+
+        // Assert
+        assertTrue(ok);
+        assertEquals("new", jwtAlgo.getActiveKeyId());
+        assertEquals(KeyStatus.ACTIVE, jwtAlgo.getActiveKeyVersion().getStatus());
+        assertEquals(KeyStatus.TRANSITIONING, oldKey.getStatus());
+        assertNotNull(oldKey.getTransitionEndsAt());
+    }
+
+    @Test
+    void testSetActiveKey_when_loadKeyPair_throws_returns_false() {
+        // Arrange
+        KeyVersion version = KeyVersion.builder()
+                .keyId("k1")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.CREATED)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        jwtAlgo.addKeyVersion(version);
+        jwtAlgo.setLoadKeyPairFailure(true);
+
+        // Act
+        boolean ok = jwtAlgo.setActiveKey("k1");
+
+        // Assert
+        assertFalse(ok);
+    }
+
+    @Test
+    void testCanKeyVerify_transitioning_key_past_transition_end_is_deactivated() {
+        // Arrange
+        KeyVersion version = KeyVersion.builder()
+                .keyId("t1")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.TRANSITIONING)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .transitionEndsAt(Instant.now().minusSeconds(5))
+                .build();
+        jwtAlgo.addKeyVersion(version);
+
+        // Act
+        boolean canVerify = jwtAlgo.canKeyVerify("t1");
+
+        // Assert
+        assertFalse(canVerify);
+        assertEquals(KeyStatus.INACTIVE, version.getStatus());
+    }
+
+    @Test
+    void testValidateDirectoryPath_rejects_non_normalized_and_symlink() {
+        // Arrange
+        Path nonNormalized = Path.of("a", "..", "b");
+
+        // Act & Assert
+        assertThrows(SecurityException.class, () -> jwtAlgo.validateDirectoryPath(nonNormalized));
+
+        Path normalized = Path.of("b");
+        try (org.mockito.MockedStatic<Files> files = Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.isSymbolicLink(normalized)).thenReturn(true);
+            assertThrows(SecurityException.class, () -> jwtAlgo.validateDirectoryPath(normalized));
+        }
+    }
+
+    @Test
+    void testFindKeyDir_returns_latest_matching_dir_and_handles_interrupt_and_io_error() throws Exception {
+        // Arrange
+        Path dir = Files.createDirectories(tempDir.resolve("scan"));
+        jwtAlgo.setCurrentKeyPath(dir);
+
+        Files.createDirectories(dir.resolve("hmac-v20240101-120000-a"));
+        Files.createDirectories(dir.resolve("hmac-v20240102-120000-b"));
+
+        // Act
+        Optional<Path> latest = jwtAlgo.callFindKeyDir("HMAC", null);
+
+        // Assert
+        assertTrue(latest.isPresent());
+        assertEquals("hmac-v20240102-120000-b", latest.get().getFileName().toString());
+
+        // Arrange (Interrupted sleep path)
+        jwtAlgo.setCurrentKeyPath(dir.resolve("empty"));
+        Files.createDirectories(jwtAlgo.getCurrentKeyPath());
+        Thread.currentThread().interrupt();
+
+        // Act
+        Optional<Path> interruptedResult = jwtAlgo.callFindKeyDir("HMAC", null);
+
+        // Assert
+        assertTrue(interruptedResult.isEmpty());
+        Thread.interrupted();
+
+        // Arrange (I/O error path)
+        jwtAlgo.setCurrentKeyPath(dir.resolve("ioerr"));
+        Files.createDirectories(jwtAlgo.getCurrentKeyPath());
+        try (org.mockito.MockedStatic<Files> files = Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.exists(jwtAlgo.getCurrentKeyPath())).thenReturn(true);
+            files.when(() -> Files.list(jwtAlgo.getCurrentKeyPath())).thenThrow(new java.io.IOException("boom"));
+
+            // Act
+            Optional<Path> ioError = jwtAlgo.callFindKeyDir("HMAC", null);
+
+            // Assert
+            assertTrue(ioError.isEmpty());
+        }
+    }
+
+    @Test
+    void testUpdateKeyStatusFile_when_repo_missing_or_ioexception_does_not_throw() throws Exception {
+        // Arrange
+        jwtAlgo.setKeyRepository(null);
+
+        // Act & Assert
+        assertDoesNotThrow(() -> jwtAlgo.callUpdateKeyStatusFile("k1", KeyStatus.ACTIVE));
+
+        KeyRepository repo = Mockito.mock(KeyRepository.class);
+        Mockito.doThrow(new java.io.IOException("io")).when(repo).saveMetadata(Mockito.eq("k1"), Mockito.eq("status.info"), Mockito.anyString());
+        jwtAlgo.setKeyRepository(repo);
+
+        assertDoesNotThrow(() -> jwtAlgo.callUpdateKeyStatusFile("k1", KeyStatus.ACTIVE));
+    }
+
+    @Test
+    void testMarkKeyActive_covers_missing_version_and_repo_paths() throws Exception {
+        // Arrange
+        jwtAlgo.setKeyRepository(null);
+
+        // Act & Assert (missing version)
+        assertDoesNotThrow(() -> jwtAlgo.callMarkKeyActive("missing"));
+
+        // Arrange (repo null path with existing version)
+        KeyVersion v = KeyVersion.builder()
+                .keyId("k1")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.CREATED)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        jwtAlgo.addKeyVersion(v);
+        assertDoesNotThrow(() -> jwtAlgo.callMarkKeyActive("k1"));
+
+        // Arrange (repo present but throws IOException)
+        KeyRepository repo = Mockito.mock(KeyRepository.class);
+        Mockito.doThrow(new java.io.IOException("io")).when(repo).saveMetadata(Mockito.eq("k1"), Mockito.eq("status.info"), Mockito.anyString());
+        jwtAlgo.setKeyRepository(repo);
+        assertDoesNotThrow(() -> jwtAlgo.callMarkKeyActive("k1"));
+    }
+
+    @Test
+    void testAutoLoadFirstKey_when_no_key_files_sets_active_null() {
+        // Arrange
+        jwtAlgo.setActiveKeyIdDirectly("will-clear");
+
+        // Act
+        jwtAlgo.autoLoadFirstKey(Algorithm.HMAC256, null, false);
+
+        // Assert
+        assertNull(jwtAlgo.getActiveKeyId());
+    }
+
+    @Test
+    void testAutoLoadKey_when_present_and_not_expired_activates() {
+        // Arrange
+        KeyVersion version = KeyVersion.builder()
+                .keyId("k1")
+                .algorithm(Algorithm.HMAC256)
+                .status(KeyStatus.CREATED)
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+        jwtAlgo.addKeyVersion(version);
+
+        // Act
+        jwtAlgo.autoLoadKey("k1");
+
+        // Assert
+        assertEquals("k1", jwtAlgo.getActiveKeyId());
+    }
+
+    @Test
+    void testAutoLoadKey_when_current_key_path_null_is_handled() {
+        // Arrange
+        jwtAlgo.setCurrentKeyPath(null);
+
+        // Act
+        jwtAlgo.autoLoadKey("k1");
+
+        // Assert
+        assertNull(jwtAlgo.getActiveKeyId());
+    }
+
+    @Test
+    void testListAllKeys_scans_directories_and_handles_invalid_inputs_and_exceptions() throws Exception {
+        // Arrange
+        Path baseDir = Files.createDirectories(tempDir.resolve("base"));
+        Path typeDir = Files.createDirectories(baseDir.resolve("unknown-keys"));
+        Path v1 = Files.createDirectories(typeDir.resolve("unknown-v20240101-120000-a"));
+
+        Files.writeString(v1.resolve("status.info"), "NOT_A_STATUS");
+        Files.writeString(v1.resolve("expiration.info"), "NOT_AN_INSTANT");
+
+        // Act
+        List<KeyVersion> empty1 = jwtAlgo.listAllKeys((String) null);
+        List<KeyVersion> empty2 = jwtAlgo.listAllKeys("");
+        List<KeyVersion> empty3 = jwtAlgo.listAllKeys(tempDir.resolve("missing").toString());
+        List<KeyVersion> keys = jwtAlgo.listAllKeys(baseDir.toString());
+
+        // Assert
+        assertEquals(Collections.emptyList(), empty1);
+        assertEquals(Collections.emptyList(), empty2);
+        assertEquals(Collections.emptyList(), empty3);
+        assertEquals(1, keys.size());
+        assertEquals("unknown-v20240101-120000-a", keys.get(0).getKeyId());
+        assertEquals(Algorithm.HMAC256, keys.get(0).getAlgorithm());
+        assertEquals(KeyStatus.CREATED, keys.get(0).getStatus());
+        assertNull(keys.get(0).getExpiresAt());
+
+        // Arrange (I/O exception path)
+        try (org.mockito.MockedStatic<Files> files = Mockito.mockStatic(Files.class)) {
+            Path anyPath = Path.of("io-base");
+            files.when(() -> Files.exists(anyPath)).thenReturn(true);
+            files.when(() -> Files.isDirectory(anyPath)).thenReturn(true);
+            files.when(() -> Files.list(anyPath)).thenThrow(new java.io.IOException("boom"));
+
+            // Act
+            List<KeyVersion> ioKeys = jwtAlgo.listAllKeys(anyPath.toString());
+
+            // Assert
+            assertEquals(Collections.emptyList(), ioKeys);
+        }
+    }
+
+    @Test
+    void testGetDirTimestamp_reads_created_time_from_version_json() throws Exception {
+        // Arrange
+        Path dir = Files.createDirectories(tempDir.resolve("any-v20240101-120000-a"));
+        Files.writeString(dir.resolve("version.json"), "{\"createdTime\":\"2024-01-01T10:15:30\"}");
+
+        // Act
+        LocalDateTime ts = jwtAlgo.getDirTimestamp(dir);
+
+        // Assert
+        assertEquals(LocalDateTime.parse("2024-01-01T10:15:30"), ts);
+    }
+
+    @Test
+    void testConvertToClaimsMap_object_conversion_failure_throws() {
+        // Arrange
+        class Node {
+            public Node next;
+        }
+        Node n = new Node();
+        n.next = n;
+
+        // Act & Assert
+        assertThrows(IllegalArgumentException.class, () -> jwtAlgo.convertToClaimsMap(n));
+    }
+
+    @Test
+    void testToDate_null_throws_and_non_null_converts() {
+        // Arrange
+        Instant now = Instant.now();
+
+        // Act & Assert
+        assertThrows(NullPointerException.class, () -> AbstractJwtAlgo.toDate(null));
+        assertEquals(now.toEpochMilli(), AbstractJwtAlgo.toDate(now).toInstant().toEpochMilli());
+    }
+
+    @Test
+    void testListAllKeys_uses_parent_dot_when_current_key_path_has_no_parent(@TempDir Path workDir) throws Exception {
+        // Arrange
+        String oldUserDir = System.getProperty("user.dir");
+        System.setProperty("user.dir", workDir.toString());
+        try {
+            Path base = Files.createDirectories(workDir.resolve("base"));
+            Path relativeKeyPath = Path.of("hmac-keys");
+            Files.createDirectories(workDir.resolve(relativeKeyPath));
+            jwtAlgo.setCurrentKeyPath(relativeKeyPath);
+
+            // Act
+            List<KeyVersion> result = jwtAlgo.listAllKeys();
+
+            // Assert
+            assertNotNull(result);
+        } finally {
+            System.setProperty("user.dir", oldUserDir);
+        }
+    }
+
+    @Test
+    void testClose_is_idempotent() {
+        // Arrange & Act
+        jwtAlgo.close();
+        jwtAlgo.close();
+
+        // Assert
+        assertTrue(true);
+    }
+
     // --- Helper Classes ---
 
     static class TestClaims {
@@ -297,6 +658,7 @@ class AbstractJwtAlgoTest {
      * Concrete implementation of AbstractJwtAlgo for testing.
      */
     static class TestJwtAlgo extends AbstractJwtAlgo {
+        private volatile boolean failLoadKeyPair;
 
         public TestJwtAlgo(KeyMinterProperties properties, Path tempDir) {
             super(properties);
@@ -310,6 +672,38 @@ class AbstractJwtAlgoTest {
 
         public void addKeyVersion(KeyVersion version) {
             this.keyVersions.put(version.getKeyId(), version);
+        }
+
+        public void setLoadKeyPairFailure(boolean fail) {
+            this.failLoadKeyPair = fail;
+        }
+
+        public void setCurrentKeyPath(Path path) {
+            this.currentKeyPath = path;
+        }
+
+        public void setKeyRepository(KeyRepository repo) {
+            this.keyRepository = repo;
+        }
+
+        public Optional<Path> callFindKeyDir(String tag, java.util.function.Predicate<Path> extraFilter) {
+            return super.findKeyDir(tag, extraFilter);
+        }
+
+        public void callUpdateKeyStatusFile(String keyId, KeyStatus status) {
+            super.updateKeyStatusFile(keyId, status);
+        }
+
+        public void callMarkKeyActive(String keyId) {
+            super.markKeyActive(keyId);
+        }
+
+        @Override
+        protected void loadKeyPair(String keyId) {
+            if (failLoadKeyPair) {
+                throw new RuntimeException("load failed");
+            }
+            super.loadKeyPair(keyId);
         }
 
         @Override
@@ -330,6 +724,55 @@ class AbstractJwtAlgoTest {
         @Override
         public Claims decodePayload(String token) {
             return null;
+        }
+
+        @Override
+        public boolean generateKeyPair(Algorithm algorithm) {
+            return false;
+        }
+
+        @Override
+        public boolean generateHmacKey(Algorithm algorithm, Integer length) {
+            return false;
+        }
+
+        @Override
+        public boolean generateAllKeyPairs() {
+            return false;
+        }
+
+        @Override
+        public boolean rotateKey(Algorithm algorithm, String newKeyIdentifier) {
+            return false;
+        }
+
+        @Override
+        public boolean rotateHmacKey(Algorithm algorithm, String newKeyIdentifier, Integer length) {
+            return false;
+        }
+
+        @Override
+        public List<KeyVersion> listKeys(Algorithm algorithm) {
+            return List.of();
+        }
+
+        @Override
+        public void loadExistingKeyVersions() {
+        }
+
+        @Override
+        public Object getCurrentKey() {
+            return null;
+        }
+
+        @Override
+        public Object getKeyByVersion(String keyId) {
+            return null;
+        }
+
+        @Override
+        public String getCurveInfo(Algorithm algorithm) {
+            return "";
         }
 
         @Override

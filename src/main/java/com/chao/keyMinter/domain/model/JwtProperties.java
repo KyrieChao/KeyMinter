@@ -16,6 +16,3 @@ public class JwtProperties {
     private String issuer;
     private Instant expiration;
 }
-
-
-

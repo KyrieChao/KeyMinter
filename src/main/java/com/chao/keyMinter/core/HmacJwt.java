@@ -68,11 +68,9 @@ public class HmacJwt extends AbstractJwtAlgo {
     public HmacJwt(KeyMinterProperties properties, Path secretDir) {
         super(properties);
         this.currentKeyPath = initializeKeyPath(secretDir);
-        
+
         // Initialize default file repository if path is set
-        if (this.currentKeyPath != null) {
-            this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
-        }
+        this.keyRepository = new com.chao.keyMinter.adapter.out.fs.FileSystemKeyRepository(this.currentKeyPath);
 
         if (isKeyRotationEnabled()) {
             enableKeyRotation();
@@ -127,7 +125,7 @@ public class HmacJwt extends AbstractJwtAlgo {
     @Override
     public boolean rotateHmacKey(Algorithm algorithm, String newKeyIdentifier, Integer length) {
         // Get transition period from properties
-        int transitionHours = keyMinterProperties != null ? keyMinterProperties.getTransitionPeriodHours() : 24;
+        int transitionHours = keyMinterProperties.getTransitionPeriodHours();
         return rotateHmacKeyWithTransition(algorithm, newKeyIdentifier, length, transitionHours);
     }
 
@@ -140,7 +138,7 @@ public class HmacJwt extends AbstractJwtAlgo {
             log.error("Key rotation is not enabled");
             return false;
         }
-        
+
         // If repository is configured, use it for rotation
         if (keyRepository != null) {
             try {
@@ -151,7 +149,7 @@ public class HmacJwt extends AbstractJwtAlgo {
 
                 // 2. Prepare files for persistence
                 Map<String, byte[]> files = new HashMap<>();
-                
+
                 // secret.key
                 secret.useBytes(bytes -> {
                     byte[] copy = new byte[bytes.length];
@@ -159,14 +157,14 @@ public class HmacJwt extends AbstractJwtAlgo {
                     files.put(SECRET_FILE_NAME, copy);
                     return null;
                 });
-                
+
                 // algorithm.info
                 files.put(ALGORITHM_FILE_NAME, algorithm.name().getBytes(StandardCharsets.UTF_8));
-                
+
                 // expiration.info
                 Instant expiresAt = calculateKeyExpiration();
                 files.put(EXPIRATION_FILE_NAME, expiresAt.toString().getBytes(StandardCharsets.UTF_8));
-                
+
                 // status.info
                 files.put(STATUS_FILE_NAME, KeyStatus.CREATED.name().getBytes(StandardCharsets.UTF_8));
 
@@ -176,12 +174,12 @@ public class HmacJwt extends AbstractJwtAlgo {
                         .algorithm(algorithm)
                         .files(files)
                         .build();
-                
+
                 keyRepository.saveKeyVersion(data);
 
                 // 4. Update in-memory state
                 updateKeyVersionWithTransition(newKeyIdentifier, algorithm, secret, transitionPeriodHours);
-                
+
                 log.info("Rotated HMAC key via repository: {}", newKeyIdentifier);
                 return true;
             } catch (IOException e) {
@@ -236,8 +234,12 @@ public class HmacJwt extends AbstractJwtAlgo {
     private void updateKeyVersionWithTransition(String keyId, Algorithm algorithm, SecureByteArray secret, int transitionPeriodHours) {
         writeLock.lock();
         try {
-            Instant calculateTime = calculateKeyExpiration();
-
+            Instant calculateTime;
+            if (transitionPeriodHours > 0) {
+                calculateTime = Instant.now().plus(transitionPeriodHours, ChronoUnit.HOURS);
+            } else {
+                calculateTime = calculateKeyExpiration();
+            }
             // Update in-memory state (Status is CREATED)
             String keyPath = currentKeyPath != null ? currentKeyPath.resolve(keyId).toString() : "repo:" + keyId;
             KeyVersion newVersion = new KeyVersion(keyId, algorithm, keyPath);
@@ -318,7 +320,7 @@ public class HmacJwt extends AbstractJwtAlgo {
             // Read metadata
             KeyStatus status = keyRepository.loadMetadata(keyId, STATUS_FILE_NAME)
                     .map(KeyStatus::valueOf).orElse(KeyStatus.CREATED);
-            
+
             Instant expiresAt = keyRepository.loadMetadata(keyId, EXPIRATION_FILE_NAME)
                     .map(Instant::parse).orElse(null);
 
@@ -346,7 +348,7 @@ public class HmacJwt extends AbstractJwtAlgo {
             KeyVersion version = new KeyVersion(keyId, algorithm, "repo:" + keyId);
             version.setStatus(status);
             version.setExpiresAt(expiresAt);
-            
+
             if (status == KeyStatus.ACTIVE) {
                 version.setActivatedTime(LocalDateTime.now());
                 this.currentSecret = secret;
@@ -493,19 +495,34 @@ public class HmacJwt extends AbstractJwtAlgo {
             return false;
         }
 
+        SecureByteArray secret;
         readLock.lock();
         try {
-            SecureByteArray secret = versionSecrets.get(keyId);
-            if (secret == null || secret.isWiped()) {
-                if (keyRepository != null) {
-                    loadKeyVersionFromRepo(keyId);
-                    secret = versionSecrets.get(keyId);
-                } else if (currentKeyPath != null) {
-                    secret = loadSecureSecretFromDir(currentKeyPath.resolve(keyId));
-                    if (secret != null && secret.length() > 0) {
+            secret = versionSecrets.get(keyId);
+        } finally {
+            readLock.unlock();
+        }
+
+        if (secret == null || secret.isWiped()) {
+            if (keyRepository != null) {
+                loadKeyVersionFromRepo(keyId);
+            } else if (currentKeyPath != null) {
+                secret = loadSecureSecretFromDir(currentKeyPath.resolve(keyId));
+                if (secret != null && secret.length() > 0) {
+                    writeLock.lock();
+                    try {
                         versionSecrets.put(keyId, secret);
+                    } finally {
+                        writeLock.unlock();
                     }
                 }
+            }
+        }
+
+        readLock.lock();
+        try {
+            if (secret == null || secret.isWiped()) {
+                secret = versionSecrets.get(keyId);
             }
 
             if (secret == null || secret.isWiped()) {
@@ -640,7 +657,6 @@ public class HmacJwt extends AbstractJwtAlgo {
 
     @Override
     protected MacAlgorithm getSignAlgorithm(Algorithm algorithm) {
-        validateHmacAlgorithm(algorithm);
         return switch (algorithm) {
             case HMAC256 -> Jwts.SIG.HS256;
             case HMAC384 -> Jwts.SIG.HS384;
@@ -674,6 +690,11 @@ public class HmacJwt extends AbstractJwtAlgo {
             }
         }
         return allSuccess;
+    }
+
+    @Override
+    public boolean rotateKey(Algorithm algorithm, String newKeyIdentifier) {
+        return rotateHmacKey(algorithm, newKeyIdentifier, null);
     }
 
     @Override
@@ -717,7 +738,7 @@ public class HmacJwt extends AbstractJwtAlgo {
 
     @Override
     protected Optional<Path> findKeyDir(String tag, java.util.function.Predicate<Path> extraFilter) {
-         return super.findKeyDir(tag, path -> true);
+        return super.findKeyDir(tag, path -> true);
     }
 
     @Override
@@ -815,10 +836,6 @@ public class HmacJwt extends AbstractJwtAlgo {
             }
 
             SecureByteArray secret = SecureByteArray.fromBytes(fileBytes);
-            if (secret.length() == 0) {
-                secret.wipe();
-                return;
-            }
 
             String keyId = KEY_VERSION_PREFIX + LocalDateTime.now()
                     .format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + "-"

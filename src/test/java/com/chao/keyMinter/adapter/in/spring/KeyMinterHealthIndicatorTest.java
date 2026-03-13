@@ -10,8 +10,6 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.Status;
 
-import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -33,15 +31,17 @@ class KeyMinterHealthIndicatorTest {
 
     @Test
     void testHealthUp(@TempDir Path tempDir) {
-        // Mock successful health check dependencies
+        // Arrange
         when(keyMinter.keyPairExists()).thenReturn(true);
         when(keyMinter.getActiveKeyId()).thenReturn("key-1");
         when(keyMinter.getKeyPath()).thenReturn(tempDir);
         when(keyMinter.getCacheSize()).thenReturn(1);
         when(keyMinter.getAlgorithmInfo()).thenReturn("HMAC256");
 
+        // Act
         Health health = healthIndicator.health();
-        
+
+        // Assert
         assertEquals(Status.UP, health.getStatus());
         assertEquals("key-1", health.getDetails().get("activeKeyId"));
         assertEquals(1, health.getDetails().get("cacheSize"));
@@ -52,12 +52,14 @@ class KeyMinterHealthIndicatorTest {
     
     @Test
     void testHealthDown() {
-        // Mock failure
+        // Arrange
         when(keyMinter.keyPairExists()).thenReturn(false);
         when(keyMinter.getKeyPath()).thenReturn(null);
-        
+
+        // Act
         Health health = healthIndicator.health();
-        
+
+        // Assert
         assertEquals(Status.DOWN, health.getStatus());
         assertEquals("none", health.getDetails().get("activeKeyId"));
         assertEquals("null", health.getDetails().get("keyDir"));
@@ -66,73 +68,112 @@ class KeyMinterHealthIndicatorTest {
     }
 
     @Test
-    void testDirNotReadable_NullPath() {
+    void dirReadable_should_be_false_when_keyPath_is_null() {
+        // Arrange
         when(keyMinter.keyPairExists()).thenReturn(true);
         when(keyMinter.getKeyPath()).thenReturn(null);
 
+        // Act
         Health health = healthIndicator.health();
 
+        // Assert
         assertEquals(Status.UP, health.getStatus());
         assertEquals(false, health.getDetails().get("dirReadable"));
     }
 
     @Test
-    void testDirNotReadable_NonExistentPath(@TempDir Path tempDir) {
+    void dirReadable_should_be_false_when_path_not_exists() {
+        // Arrange
+        Path keyPath = Path.of("not-exist-dir");
         when(keyMinter.keyPairExists()).thenReturn(true);
-        when(keyMinter.getKeyPath()).thenReturn(tempDir.resolve("non-existent"));
+        when(keyMinter.getKeyPath()).thenReturn(keyPath);
 
-        Health health = healthIndicator.health();
+        // Act
+        try (org.mockito.MockedStatic<Files> files = org.mockito.Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.exists(keyPath)).thenReturn(false);
 
-        assertEquals(Status.UP, health.getStatus());
-        assertEquals(false, health.getDetails().get("dirReadable"));
+            Health health = healthIndicator.health();
+
+            // Assert
+            assertEquals(Status.UP, health.getStatus());
+            assertEquals(false, health.getDetails().get("dirReadable"));
+            files.verify(() -> Files.isDirectory(any()), never());
+            files.verify(() -> Files.isReadable(any()), never());
+        }
     }
 
     @Test
-    void testDirNotReadable_NotDirectory(@TempDir Path tempDir) throws IOException {
-        Path file = tempDir.resolve("test-file");
-        Files.createFile(file);
-        
+    void dirReadable_should_be_false_when_path_is_not_directory() {
+        // Arrange
+        Path keyPath = Path.of("a-file");
         when(keyMinter.keyPairExists()).thenReturn(true);
-        when(keyMinter.getKeyPath()).thenReturn(file);
+        when(keyMinter.getKeyPath()).thenReturn(keyPath);
 
-        Health health = healthIndicator.health();
+        // Act
+        try (org.mockito.MockedStatic<Files> files = org.mockito.Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.exists(keyPath)).thenReturn(true);
+            files.when(() -> Files.isDirectory(keyPath)).thenReturn(false);
 
-        assertEquals(Status.UP, health.getStatus());
-        assertEquals(false, health.getDetails().get("dirReadable"));
+            Health health = healthIndicator.health();
+
+            // Assert
+            assertEquals(Status.UP, health.getStatus());
+            assertEquals(false, health.getDetails().get("dirReadable"));
+            files.verify(() -> Files.isReadable(any()), never());
+        }
     }
 
     @Test
-    void testDirNotReadable_PermissionDenied(@TempDir Path tempDir) {
-        Path restrictedDir = tempDir.resolve("restricted");
-        try {
-            Files.createDirectories(restrictedDir);
-            File file = restrictedDir.toFile();
-            // Try to make it unreadable. 
-            // Note: This often fails on Windows or root users.
-            boolean success = file.setReadable(false);
-            
-            if (success) {
-                when(keyMinter.keyPairExists()).thenReturn(true);
-                when(keyMinter.getKeyPath()).thenReturn(restrictedDir);
+    void dirReadable_should_be_false_when_directory_not_readable() {
+        // Arrange
+        Path keyPath = Path.of("no-read-dir");
+        when(keyMinter.keyPairExists()).thenReturn(true);
+        when(keyMinter.getKeyPath()).thenReturn(keyPath);
 
-                Health health = healthIndicator.health();
+        // Act
+        try (org.mockito.MockedStatic<Files> files = org.mockito.Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.exists(keyPath)).thenReturn(true);
+            files.when(() -> Files.isDirectory(keyPath)).thenReturn(true);
+            files.when(() -> Files.isReadable(keyPath)).thenReturn(false);
 
-                assertEquals(Status.UP, health.getStatus());
-                assertEquals(false, health.getDetails().get("dirReadable"));
-            } else {
-                System.out.println("Skipping testDirNotReadable_PermissionDenied as setReadable(false) failed");
-            }
-        } catch (IOException e) {
-            fail("Setup failed");
+            Health health = healthIndicator.health();
+
+            // Assert
+            assertEquals(Status.UP, health.getStatus());
+            assertEquals(false, health.getDetails().get("dirReadable"));
         }
     }
     
     @Test
+    void dirReadable_should_be_true_when_directory_exists_is_directory_and_readable() {
+        // Arrange
+        Path keyPath = Path.of("readable-dir");
+        when(keyMinter.keyPairExists()).thenReturn(true);
+        when(keyMinter.getKeyPath()).thenReturn(keyPath);
+
+        // Act
+        try (org.mockito.MockedStatic<Files> files = org.mockito.Mockito.mockStatic(Files.class)) {
+            files.when(() -> Files.exists(keyPath)).thenReturn(true);
+            files.when(() -> Files.isDirectory(keyPath)).thenReturn(true);
+            files.when(() -> Files.isReadable(keyPath)).thenReturn(true);
+
+            Health health = healthIndicator.health();
+
+            // Assert
+            assertEquals(Status.UP, health.getStatus());
+            assertEquals(true, health.getDetails().get("dirReadable"));
+        }
+    }
+
+    @Test
     void testHealthException() {
+        // Arrange
         when(keyMinter.keyPairExists()).thenThrow(new RuntimeException("Error"));
-        
+
+        // Act
         Health health = healthIndicator.health();
-        
+
+        // Assert
         assertEquals(Status.DOWN, health.getStatus());
         assertNotNull(health.getDetails().get("error"));
     }
