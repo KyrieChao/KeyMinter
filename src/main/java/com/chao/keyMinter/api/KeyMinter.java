@@ -103,9 +103,7 @@ public class KeyMinter {
         }
     }
 
-    /**
-     * Switch to a specific algorithm using a Path object for directory.
-     */
+
     public synchronized boolean switchTo(Algorithm algorithm, Path path, boolean autoload) {
         Objects.requireNonNull(algorithm, "Algorithm cannot be null");
         try {

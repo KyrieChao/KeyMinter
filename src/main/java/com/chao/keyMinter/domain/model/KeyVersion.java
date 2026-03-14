@@ -68,6 +68,7 @@ public class KeyVersion {
         this.keyId = keyId;
         this.algorithm = algorithm;
         this.keyPath = keyPath;
+        this.status = KeyStatus.CREATED;
     }
 
     /**
